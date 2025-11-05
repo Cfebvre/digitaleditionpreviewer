@@ -17,10 +17,10 @@
       --thumb-w: 108px;
     }
     html, body { height: 100%; background: var(--bg); color: var(--ink); margin: 0; }
-    body { display: grid; grid-template-rows: auto 1fr; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji"; }
+    body { display: grid; grid-template-rows: var(--toolbar-h) 1fr; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji"; }
 
     /* Toolbar */
-    .toolbar{ display:flex; flex-wrap:wrap; align-items:center; gap:10px; padding:8px 12px; min-height:var(--toolbar-h); background:linear-gradient(180deg,#0e1623,#0b111a); border-bottom:1px solid #1b2740; position:sticky; top:0; z-index:10; }
+    .toolbar{ display:flex; flex-wrap:wrap; align-items:center; gap:10px; padding:8px 12px; height:var(--toolbar-h); background:linear-gradient(180deg,#0e1623,#0b111a); border-bottom:1px solid #1b2740; position:sticky; top:0; z-index:10; }
     .group{ display:flex; flex-wrap:wrap; align-items:center; gap:6px; background: var(--panel); border:1px solid #1f2b45; padding:4px; border-radius: 12px; box-shadow: var(--shadow); }
     .btn{ -webkit-tap-highlight-color: transparent; appearance:none; cursor:pointer; display:inline-grid; place-items:center; width:36px; height:36px; border:0; border-radius:10px; background:#0f1a2b; color:var(--ink); transition:transform .06s ease, background .12s; flex:0 0 auto; }
     .btn:hover{ background:#13233a; }
@@ -31,7 +31,7 @@
     .grow{ flex:1; }
 
     /* Layout */
-    .wrap{ display:grid; grid-template-columns: 0 1fr; height: 100%; min-height: 0; }
+    .wrap{ display:grid; grid-template-columns: 0 1fr; /* thumbs width toggled via JS */ height: 100%; min-height: 0; }
     .thumbs{ background: #0d1626; border-right:1px solid #1b2740; overflow:auto; overscroll-behavior: contain; padding:10px; gap:10px; display:grid; grid-auto-rows:min-content; }
     .thumb{ width:var(--thumb-w); background:#0f1a2b; border:1px solid #1e2740; border-radius: 10px; padding:6px; cursor:pointer; box-shadow: var(--shadow); }
     .thumb.active{ outline:2px solid var(--accent); }
@@ -48,17 +48,7 @@
 
     .k{ font: 12px/1.2 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color:#9fb3d9; }
 
-    /* Mobile */
-    @media (max-width: 900px){
-      :root{ --toolbar-h: 50px; --thumb-w: 88px; }
-      .wrap{ grid-template-columns: 0 1fr; }
-      .pageLayer{ padding: 12px; }
-      .group.hide-mobile{ display:none; }
-      .toolbar{ gap:8px; }
-      .group{ gap:4px; }
-      .field{ min-width:54px; }
-      .label{ font-size:12px; }
-    }
+    /* Mobile condense */
     @media (max-width: 520px){
       .btn{ width:32px; height:32px; }
       #findInput{ display:none; }
@@ -71,7 +61,7 @@
   <!-- Toolbar -->
   <div class="toolbar" role="region" aria-label="Document controls">
     <div class="group">
-      <button class="btn" id="openThumbs" title="Toggle thumbnails">📚</button>
+      <button class="btn" id="openThumbs" title="Toggle thumbnails" aria-pressed="false">📚</button>
       <button class="btn" id="single" title="Single page">🗎</button>
       <button class="btn" id="double" title="Two-page spread">🗏</button>
     </div>
@@ -116,7 +106,7 @@
   <!-- Floating helper tips -->
   <div class="helper" aria-hidden="true">
     <div class="group" style="padding:8px 10px;">
-      <div class="k">Tip: Swipe left/right • Pinch to zoom • Arrow keys navigate • F for fullscreen</div>
+      <div class="k">Tip: Swipe left/right • Pinch to zoom • Arrow keys • F full screen</div>
     </div>
   </div>
 
@@ -126,38 +116,21 @@
   </script>
   <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
   <script>
-    /* =====================================================
-       Digital Edition Viewer (PDF.js wrapper)
-       ===================================================== */
-
+    /* ===== Baseline viewer (matches your working build) + small UX adds ===== */
     const $ = (sel, el=document) => el.querySelector(sel);
     const $$ = (sel, el=document) => Array.from(el.querySelectorAll(sel));
 
-    // --- Config & state ---
     const params = new URLSearchParams(location.search);
     const DEFAULT_SRC = "https://api.nem-aus.atexcloud.io/file-service/file/content/ZDQ2MDc5MTYtMTE4ZC00/c3036606-5dc8-4e8c-8de1-83627b14f10f";
     const SRC = params.get("src") || DEFAULT_SRC; // pass ?src=ENCODED_URL when embedding
 
-    const state = {
-      pdf: null,
-      pageCount: 0,
-      current: 1,
-      scale: 1,
-      baseScale: 1,
-      twoPage: false,
-      thumbsOpen: false,
-      rendering: new Map(),
-      naturalWidth: null,
-    };
+    const state = { pdf:null, pageCount:0, current:1, scale:1, baseScale:1, twoPage:false, thumbsOpen:false, rendering:new Map() };
 
-    // PDF.js worker
     pdfjsLib.GlobalWorkerOptions.workerSrc = `${PDFJS_VIEWER}/build/pdf.worker.min.js`;
 
-    // Elements
     const stage = $('#stage');
     const spread = $('#spread');
     const thumbs = $('#thumbs');
-
     const prevBtn = $('#prev');
     const nextBtn = $('#next');
     const pageInput = $('#pageInput');
@@ -176,48 +149,23 @@
 
     downloadLink.href = SRC;
 
-    // --- Helpers ---
     function clamp(n, min, max){ return Math.max(min, Math.min(max, n)); }
     function setZoomLabel(){ zoomLabel.textContent = Math.round(state.scale * 100) + '%'; }
     function setPageUI(){ pageInput.value = state.current; pageCountEl.textContent = ` / ${state.pageCount}`; prevBtn.disabled = state.current <= 1; nextBtn.disabled = state.current >= state.pageCount; }
 
-    function toggleThumbs(force){
-      state.thumbsOpen = force ?? !state.thumbsOpen;
-      const col = state.thumbsOpen ? 240 : 0;
-      document.querySelector('.wrap').style.gridTemplateColumns = `${col}px 1fr`;
-      openThumbsBtn.setAttribute('aria-pressed', String(state.thumbsOpen));
-    }
-
+    function toggleThumbs(force){ state.thumbsOpen = force ?? !state.thumbsOpen; const col = state.thumbsOpen ? 240 : 0; document.querySelector('.wrap').style.gridTemplateColumns = `${col}px 1fr`; openThumbsBtn.setAttribute('aria-pressed', String(state.thumbsOpen)); }
     function setTwoPage(on){ state.twoPage = !!on; singleBtn.disabled = !on; doubleBtn.disabled = on; renderSpread(); }
 
     function fitToWidth(){
-      // If we don’t yet know the intrinsic width, try to infer it from the first canvas.
-      const firstCanvas = spread.querySelector('.page canvas');
-      if (!state.naturalWidth && firstCanvas) {
-        state.naturalWidth = firstCanvas.width / (window.devicePixelRatio || 1);
-      }
-
-      // If still unknown, render once at scale 1, then fit after it paints.
-      if (!state.naturalWidth) {
-        state.scale = 1; setZoomLabel();
-        renderSpread().then(() => {
-          const c = spread.querySelector('.page canvas');
-          if (c) state.naturalWidth = c.width / (window.devicePixelRatio || 1);
-          fitToWidth();
-        });
-        return;
-      }
-
-      const stageW = stage.clientWidth - 32; // padding
-      const perPageW = state.twoPage ? (stageW - 40) / 2 : stageW; // gap between pages
-      const target = Math.max(perPageW, 100);
-      const scale = clamp(target / state.naturalWidth, .2, 6);
+      const pageEl = spread.querySelector('.page'); if(!pageEl) return;
+      const canvas = pageEl.querySelector('canvas'); if(!canvas || !canvas.width){ return; }
+      const stageW = stage.clientWidth - (state.twoPage ? 40 : 0) - 32; // gaps & padding
+      const scale = clamp(stageW / canvas.width, .3, 3.5);
       state.baseScale = scale; state.scale = scale; setZoomLabel(); renderSpread();
     }
 
-    function zoom(delta){ state.scale = clamp(state.scale * (delta>0 ? 1.1 : 1/1.1), .3, 4); setZoomLabel(); renderSpread(/*reuseViewport=*/true); }
+    function zoom(delta){ state.scale = clamp(state.scale * (delta>0 ? 1.1 : 1/1.1), .3, 4); setZoomLabel(); renderSpread(); }
 
-    // --- Rendering ---
     async function renderPage(num, container){
       if(num < 1 || num > state.pageCount) return;
       const key = `${num}@${state.scale.toFixed(3)}`;
@@ -236,8 +184,7 @@
 
       const task = page.render({ canvasContext: ctx, viewport });
       state.rendering.set(key, task.promise);
-      await task.promise; // ensure draw completes
-      state.rendering.delete(key);
+      await task.promise; state.rendering.delete(key);
     }
 
     function pageBox(){ const el = document.createElement('div'); el.className = 'page'; el.setAttribute('role','region'); return el; }
@@ -251,7 +198,6 @@
       if(state.twoPage && rightNum && rightNum !== leftNum){ const right = pageBox(); right.setAttribute('aria-label', `Page ${rightNum}`); spread.appendChild(right); await Promise.all([renderPage(leftNum,left), renderPage(rightNum,right)]); }
       else { await renderPage(leftNum, left); }
 
-      // Update active thumb highlight
       $$('.thumb').forEach(t => t.classList.toggle('active', Number(t.dataset.n) === state.current));
     }
 
@@ -271,44 +217,32 @@
       const loadingTask = pdfjsLib.getDocument({ url: src, withCredentials: false });
       state.pdf = await loadingTask.promise;
       state.pageCount = state.pdf.numPages;
-      state.current = 1;
+      state.current = 1; setPageUI();
 
-      // Try to read natural width from page 1 (not critical if it fails)
-      try { const p1 = await state.pdf.getPage(1); const vp1 = p1.getViewport({ scale: 1 }); state.naturalWidth = vp1.width; } catch{}
-
-      setPageUI();
-
-      // Build thumbs lazily to keep first paint quick
       thumbs.innerHTML = '';
       const first = Math.min(12, state.pageCount);
       for(let i=1; i<=first; i++) renderThumb(i);
-      (window.requestIdleCallback || setTimeout)(async () => { for(let i=first+1; i<=state.pageCount; i++) await renderThumb(i); }, 1);
+      requestIdleCallback?.(async () => { for(let i=first+1; i<=state.pageCount; i++) await renderThumb(i); })
 
-      // Initial render then fit
       state.scale = 1; setZoomLabel();
       await renderSpread();
       fitToWidth();
     }
 
-    // --- Events ---
-    // Debounced auto-fit on resize/orientation
-    let resizeT; window.addEventListener('resize', () => { clearTimeout(resizeT); resizeT = setTimeout(fitToWidth, 120); });
-    new ResizeObserver(() => { clearTimeout(resizeT); resizeT = setTimeout(fitToWidth, 80); }).observe(stage);
-
+    // Events
+    window.addEventListener('resize', () => fitToWidth());
     prevBtn.addEventListener('click', () => { state.current = clamp(state.current-1,1,state.pageCount); setPageUI(); renderSpread(); });
     nextBtn.addEventListener('click', () => { state.current = clamp(state.current+1,1,state.pageCount); setPageUI(); renderSpread(); });
     pageInput.addEventListener('change', () => { const n = clamp(parseInt(pageInput.value||'1',10),1,state.pageCount); state.current=n; setPageUI(); renderSpread(); });
 
-    const zoom = (delta) => { state.scale = clamp(state.scale * (delta>0 ? 1.1 : 1/1.1), .3, 4); setZoomLabel(); renderSpread(); };
     zoomInBtn.addEventListener('click', () => zoom(+1));
     zoomOutBtn.addEventListener('click', () => zoom(-1));
     fitWidthBtn.addEventListener('click', fitToWidth);
 
-    singleBtn.addEventListener('click', () => { setTwoPage(false); fitToWidth(); });
-    doubleBtn.addEventListener('click', () => { setTwoPage(true); fitToWidth(); });
+    singleBtn.addEventListener('click', () => setTwoPage(false));
+    doubleBtn.addEventListener('click', () => setTwoPage(true));
     openThumbsBtn.addEventListener('click', () => toggleThumbs());
 
-    // Keyboard
     window.addEventListener('keydown', (e) => {
       if (['INPUT','TEXTAREA'].includes(document.activeElement.tagName)) return;
       if (e.key === 'ArrowLeft') prevBtn.click();
@@ -320,7 +254,7 @@
       else if (e.key === 'f') fullscreenBtn.click();
     });
 
-    // Touch gestures (simple)
+    // Touch
     let touchStartX = 0, touchStartDist = 0, pinching = false;
     stage.addEventListener('touchstart', (e) => {
       if(e.touches.length === 1){ touchStartX = e.touches[0].clientX; pinching = false; }
@@ -345,7 +279,7 @@
       }
     });
 
-    // Simple find (incremental)
+    // Simple find
     findNextBtn.addEventListener('click', async () => {
       const q = (findInput.value||'').trim(); if(!q) return;
       for(let i=state.current; i<=state.pageCount; i++){
@@ -355,24 +289,17 @@
     });
     findInput.addEventListener('keydown', (e)=>{ if(e.key==='Enter') findNextBtn.click(); });
 
-    // Fullscreen helpers
-    function fsDoc(){ return document.documentElement; }
+    // Fullscreen
     function isFS(){ return !!(document.fullscreenElement || document.webkitFullscreenElement); }
-    async function enterFS(){ const el = fsDoc(); if(el.requestFullscreen) await el.requestFullscreen(); else if(el.webkitRequestFullscreen) el.webkitRequestFullscreen(); }
+    async function enterFS(){ const el = document.documentElement; if(el.requestFullscreen) await el.requestFullscreen(); else if(el.webkitRequestFullscreen) el.webkitRequestFullscreen(); }
     async function exitFS(){ if(document.exitFullscreen) await document.exitFullscreen(); else if(document.webkitExitFullscreen) document.webkitExitFullscreen(); }
     function refreshFSUI(){ fullscreenBtn.title = isFS()? 'Exit full screen (F)' : 'Full screen (F)'; fullscreenBtn.textContent = isFS()? '🡽' : '⛶'; }
-    fullscreenBtn.addEventListener('click', async () => {
-      try{ isFS()? await exitFS() : await enterFS(); }
-      catch(err){ window.open(location.href, '_blank'); }
-      finally { refreshFSUI(); fitToWidth(); }
-    });
+    fullscreenBtn.addEventListener('click', async () => { try{ isFS()? await exitFS() : await enterFS(); }catch(e){ window.open(location.href, '_blank'); } finally{ refreshFSUI(); fitToWidth(); } });
     document.addEventListener('fullscreenchange', ()=>{ refreshFSUI(); fitToWidth(); });
     document.addEventListener('webkitfullscreenchange', ()=>{ refreshFSUI(); fitToWidth(); });
 
-    // Kick it off
-    toggleThumbs(false);
-    setTwoPage(false);
-    refreshFSUI();
+    // Start
+    toggleThumbs(false); setTwoPage(false); refreshFSUI();
     loadPDF(SRC).catch(err => {
       console.error(err);
       spread.innerHTML = `<div style="opacity:.8;max-width:720px;text-align:center">\n        <h2>We couldn't load this PDF</h2>\n        <p>Please check that the file URL is accessible and has CORS enabled.<br/>\n           As a fallback, you can <a href="${SRC}" target="_blank" rel="noopener">open it directly</a>.\n        </p>\n      </div>`;
