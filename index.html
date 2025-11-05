@@ -17,7 +17,7 @@
       --thumb-w: 108px;
     }
     html, body { height: 100%; background: var(--bg); color: var(--ink); margin: 0; }
-    body { display: grid; grid-template-rows: var(--toolbar-h) 1fr; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji"; }
+    body { display: grid; grid-template-rows: auto 1fr; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji"; }
 
     /* Toolbar */
     .toolbar{ display:flex; flex-wrap:wrap; align-items:center; gap:10px; padding:8px 12px; min-height:var(--toolbar-h); background:linear-gradient(180deg,#0e1623,#0b111a); border-bottom:1px solid #1b2740; position:sticky; top:0; z-index:10; }
@@ -31,7 +31,7 @@
     .grow{ flex:1; }
 
     /* Layout */
-    .wrap{ display:grid; grid-template-columns: 0 1fr; /* thumbs width toggled via JS */ height: 100%; min-height: 0; }
+    .wrap{ display:grid; grid-template-columns: 0 1fr; height: 100%; min-height: 0; }
     .thumbs{ background: #0d1626; border-right:1px solid #1b2740; overflow:auto; overscroll-behavior: contain; padding:10px; gap:10px; display:grid; grid-auto-rows:min-content; }
     .thumb{ width:var(--thumb-w); background:#0f1a2b; border:1px solid #1e2740; border-radius: 10px; padding:6px; cursor:pointer; box-shadow: var(--shadow); }
     .thumb.active{ outline:2px solid var(--accent); }
@@ -54,22 +54,16 @@
       .wrap{ grid-template-columns: 0 1fr; }
       .pageLayer{ padding: 12px; }
       .group.hide-mobile{ display:none; }
-      /* Allow toolbar groups to break onto new lines neatly */
       .toolbar{ gap:8px; }
       .group{ gap:4px; }
       .field{ min-width:54px; }
       .label{ font-size:12px; }
     }
     @media (max-width: 520px){
-      /* Condense controls further on very small phones */
       .btn{ width:32px; height:32px; }
       #findInput{ display:none; }
       #pageInput{ width:52px; }
       .label#pageCount{ min-width:42px; text-align:center; }
-    }
-      .wrap{ grid-template-columns: 0 1fr; }
-      .pageLayer{ padding: 12px; }
-      .group.hide-mobile{ display:none; }
     }
   </style>
 </head>
@@ -77,7 +71,7 @@
   <!-- Toolbar -->
   <div class="toolbar" role="region" aria-label="Document controls">
     <div class="group">
-      <button class="btn" id="openThumbs" title="Toggle thumbnails" aria-pressed="false">📚</button>
+      <button class="btn" id="openThumbs" title="Toggle thumbnails">📚</button>
       <button class="btn" id="single" title="Single page">🗎</button>
       <button class="btn" id="double" title="Two-page spread">🗏</button>
     </div>
@@ -122,21 +116,18 @@
   <!-- Floating helper tips -->
   <div class="helper" aria-hidden="true">
     <div class="group" style="padding:8px 10px;">
-      <div class="k">Tip: Swipe left/right • Pinch to zoom • Arrow keys navigate</div>
+      <div class="k">Tip: Swipe left/right • Pinch to zoom • Arrow keys navigate • F for fullscreen</div>
     </div>
   </div>
 
   <!-- PDF.js (via CDN) -->
   <script>
-    // Choose a stable build. If you self-host, update these two URLs accordingly.
     const PDFJS_VIEWER = "https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174";
   </script>
   <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
   <script>
     /* =====================================================
-       Digital Edition Viewer (lightweight PDF.js wrapper)
-       Features: thumbnails, single/two-page, fit-to-width,
-       swipe & pinch, search (simple), keyboard nav
+       Digital Edition Viewer (PDF.js wrapper)
        ===================================================== */
 
     const $ = (sel, el=document) => el.querySelector(sel);
@@ -152,10 +143,11 @@
       pageCount: 0,
       current: 1,
       scale: 1,
-      baseScale: 1, // recalculated on resize/fit
+      baseScale: 1,
       twoPage: false,
       thumbsOpen: false,
       rendering: new Map(),
+      naturalWidth: null,
     };
 
     // PDF.js worker
@@ -178,9 +170,9 @@
     const doubleBtn = $('#double');
     const openThumbsBtn = $('#openThumbs');
     const downloadLink = $('#download');
-    const fullscreenBtn = $('#fullscreen');
     const findInput = $('#findInput');
     const findNextBtn = $('#findNext');
+    const fullscreenBtn = $('#fullscreen');
 
     downloadLink.href = SRC;
 
@@ -199,11 +191,26 @@
     function setTwoPage(on){ state.twoPage = !!on; singleBtn.disabled = !on; doubleBtn.disabled = on; renderSpread(); }
 
     function fitToWidth(){
-      // Use intrinsic page width at scale=1 (CSS px) for accurate fit
-      if(!state.naturalWidth) return; // set during load
+      // If we don’t yet know the intrinsic width, try to infer it from the first canvas.
+      const firstCanvas = spread.querySelector('.page canvas');
+      if (!state.naturalWidth && firstCanvas) {
+        state.naturalWidth = firstCanvas.width / (window.devicePixelRatio || 1);
+      }
+
+      // If still unknown, render once at scale 1, then fit after it paints.
+      if (!state.naturalWidth) {
+        state.scale = 1; setZoomLabel();
+        renderSpread().then(() => {
+          const c = spread.querySelector('.page canvas');
+          if (c) state.naturalWidth = c.width / (window.devicePixelRatio || 1);
+          fitToWidth();
+        });
+        return;
+      }
+
       const stageW = stage.clientWidth - 32; // padding
-      const perPageW = (state.twoPage ? (stageW - 40) / 2 : stageW); // account for gap between pages
-      const target = Math.max( perPageW, 100 );
+      const perPageW = state.twoPage ? (stageW - 40) / 2 : stageW; // gap between pages
+      const target = Math.max(perPageW, 100);
       const scale = clamp(target / state.naturalWidth, .2, 6);
       state.baseScale = scale; state.scale = scale; setZoomLabel(); renderSpread();
     }
@@ -235,7 +242,7 @@
 
     function pageBox(){ const el = document.createElement('div'); el.className = 'page'; el.setAttribute('role','region'); return el; }
 
-    async function renderSpread(reuseViewport=false){
+    async function renderSpread(){
       spread.innerHTML = '';
       const leftNum = state.current;
       const rightNum = state.twoPage ? clamp(leftNum+1, 1, state.pageCount) : null;
@@ -266,52 +273,33 @@
       state.pageCount = state.pdf.numPages;
       state.current = 1;
 
-      // Determine intrinsic page width at scale=1 for correct fit calculations
-      const firstPage = await state.pdf.getPage(1);
-      const vp1 = firstPage.getViewport({ scale: 1 });
-      state.naturalWidth = vp1.width; // CSS px at scale 1
+      // Try to read natural width from page 1 (not critical if it fails)
+      try { const p1 = await state.pdf.getPage(1); const vp1 = p1.getViewport({ scale: 1 }); state.naturalWidth = vp1.width; } catch{}
 
-      setPageUI();
-
-      // Build thumbs lazily
-      thumbs.innerHTML = '';
-      const first = Math.min(12, state.pageCount);
-      for(let i=1; i<=first; i++) renderThumb(i);
-      requestIdleCallback?.(async () => { for(let i=first+1; i<=state.pageCount; i++) await renderThumb(i); })
-
-      // Initial render & fit
-      state.scale = 1; setZoomLabel();
-      await renderSpread();
-      fitToWidth();
-    });
-      state.pdf = await loadingTask.promise;
-      state.pageCount = state.pdf.numPages;
-      state.current = 1;
       setPageUI();
 
       // Build thumbs lazily to keep first paint quick
       thumbs.innerHTML = '';
       const first = Math.min(12, state.pageCount);
       for(let i=1; i<=first; i++) renderThumb(i);
-      // Queue the rest after first interaction/idle
-      requestIdleCallback?.(async () => { for(let i=first+1; i<=state.pageCount; i++) await renderThumb(i); })
+      (window.requestIdleCallback || setTimeout)(async () => { for(let i=first+1; i<=state.pageCount; i++) await renderThumb(i); }, 1);
 
-      // Initial render
+      // Initial render then fit
       state.scale = 1; setZoomLabel();
       await renderSpread();
-      fitToWidth(); // then fit after first paint so we can measure canvas width
+      fitToWidth();
     }
 
     // --- Events ---
     // Debounced auto-fit on resize/orientation
     let resizeT; window.addEventListener('resize', () => { clearTimeout(resizeT); resizeT = setTimeout(fitToWidth, 120); });
-    // Also observe container size changes (e.g., when embedded layout changes)
     new ResizeObserver(() => { clearTimeout(resizeT); resizeT = setTimeout(fitToWidth, 80); }).observe(stage);
 
     prevBtn.addEventListener('click', () => { state.current = clamp(state.current-1,1,state.pageCount); setPageUI(); renderSpread(); });
     nextBtn.addEventListener('click', () => { state.current = clamp(state.current+1,1,state.pageCount); setPageUI(); renderSpread(); });
     pageInput.addEventListener('change', () => { const n = clamp(parseInt(pageInput.value||'1',10),1,state.pageCount); state.current=n; setPageUI(); renderSpread(); });
 
+    const zoom = (delta) => { state.scale = clamp(state.scale * (delta>0 ? 1.1 : 1/1.1), .3, 4); setZoomLabel(); renderSpread(); };
     zoomInBtn.addEventListener('click', () => zoom(+1));
     zoomOutBtn.addEventListener('click', () => zoom(-1));
     fitWidthBtn.addEventListener('click', fitToWidth);
@@ -357,7 +345,7 @@
       }
     });
 
-    // Simple find (incremental): highlights are non-trivial on canvas; we jump to next match page
+    // Simple find (incremental)
     findNextBtn.addEventListener('click', async () => {
       const q = (findInput.value||'').trim(); if(!q) return;
       for(let i=state.current; i<=state.pageCount; i++){
@@ -368,16 +356,15 @@
     findInput.addEventListener('keydown', (e)=>{ if(e.key==='Enter') findNextBtn.click(); });
 
     // Fullscreen helpers
-    function fsElement(){ return document.documentElement; }
-    function isFullscreen(){ return !!(document.fullscreenElement || document.webkitFullscreenElement); }
-    async function enterFS(){ const el = fsElement(); if(el.requestFullscreen) await el.requestFullscreen(); else if(el.webkitRequestFullscreen) el.webkitRequestFullscreen(); }
+    function fsDoc(){ return document.documentElement; }
+    function isFS(){ return !!(document.fullscreenElement || document.webkitFullscreenElement); }
+    async function enterFS(){ const el = fsDoc(); if(el.requestFullscreen) await el.requestFullscreen(); else if(el.webkitRequestFullscreen) el.webkitRequestFullscreen(); }
     async function exitFS(){ if(document.exitFullscreen) await document.exitFullscreen(); else if(document.webkitExitFullscreen) document.webkitExitFullscreen(); }
-    function refreshFSUI(){ fullscreenBtn.title = isFullscreen()? 'Exit full screen (F)' : 'Full screen (F)'; fullscreenBtn.textContent = isFullscreen()? '🡽' : '⛶'; }
+    function refreshFSUI(){ fullscreenBtn.title = isFS()? 'Exit full screen (F)' : 'Full screen (F)'; fullscreenBtn.textContent = isFS()? '🡽' : '⛶'; }
     fullscreenBtn.addEventListener('click', async () => {
-      try{ isFullscreen()? await exitFS() : await enterFS(); }catch(err){
-        // Fallback for browsers without Fullscreen API (older iOS Safari): open a pop-out
-        window.open(location.href, '_blank');
-      } finally { refreshFSUI(); fitToWidth(); }
+      try{ isFS()? await exitFS() : await enterFS(); }
+      catch(err){ window.open(location.href, '_blank'); }
+      finally { refreshFSUI(); fitToWidth(); }
     });
     document.addEventListener('fullscreenchange', ()=>{ refreshFSUI(); fitToWidth(); });
     document.addEventListener('webkitfullscreenchange', ()=>{ refreshFSUI(); fitToWidth(); });
